@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import sys
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,6 +11,8 @@ from pathlib import Path
 from meal_planner.config import load_config
 from meal_planner.indexer import discover_recipe_files, parse_recipe_file
 from meal_planner.models import Recipe
+
+logger = logging.getLogger(__name__)
 
 # Meal type aliases: what frontmatter values count for each meal
 MEAL_TYPE_MAP = {
@@ -107,9 +109,17 @@ def filter_recipes(
             continue
         if exclude and is_excluded(r, exclude):
             continue
-        if min_protein is not None and r.protein_g is not None and r.protein_g < min_protein:
+        if (
+            min_protein is not None
+            and r.protein_g is not None
+            and r.protein_g < min_protein
+        ):
             continue
-        if max_calories is not None and r.calories is not None and r.calories > max_calories:
+        if (
+            max_calories is not None
+            and r.calories is not None
+            and r.calories > max_calories
+        ):
             continue
         result.append(r)
     return result
@@ -165,7 +175,11 @@ def score_macro_fit(
             pro_score = max(0, 1 - pro_deviation)
 
         # Weight protein fit slightly higher
-        combined = (cal_score * 0.4 + pro_score * 0.6) if (target_calories and target_protein) else max(cal_score, pro_score)
+        combined = (
+            (cal_score * 0.4 + pro_score * 0.6)
+            if (target_calories and target_protein)
+            else max(cal_score, pro_score)
+        )
 
         if combined > best_score:
             best_score = combined
@@ -211,7 +225,9 @@ def score_recipe(
     breakdown["recency"] = round(recency_score, 1)
 
     # Macro fit (0-20)
-    macro_score_norm, best_servings = score_macro_fit(recipe, target_calories, target_protein)
+    macro_score_norm, best_servings = score_macro_fit(
+        recipe, target_calories, target_protein
+    )
     macro_score = macro_score_norm * 20
     breakdown["macro_fit"] = round(macro_score, 1)
 
@@ -351,7 +367,11 @@ def run_suggest(
     """CLI entry point for suggest command."""
     tags = [t.strip() for t in dietary_tags.split(",")] if dietary_tags else None
     excl = [e.strip() for e in exclude.split(",")] if exclude else None
-    ingredients = [i.strip() for i in available_ingredients.split(",")] if available_ingredients else None
+    ingredients = (
+        [i.strip() for i in available_ingredients.split(",")]
+        if available_ingredients
+        else None
+    )
 
     scored = suggest_recipes(
         cooking_path,
@@ -369,7 +389,7 @@ def run_suggest(
     )
 
     if not scored:
-        print("No recipes match the given filters.", file=sys.stderr)
+        logger.warning("No recipes match the given filters")
         return
 
     if output_format == "json":

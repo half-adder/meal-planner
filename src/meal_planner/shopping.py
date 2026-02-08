@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -11,42 +12,148 @@ from meal_planner.config import load_config
 from meal_planner.indexer import parse_recipe_file, discover_recipe_files
 from meal_planner.models import ParsedIngredient
 
+logger = logging.getLogger(__name__)
+
 # Section classification by keyword
 SECTION_KEYWORDS = {
     "Produce": [
-        "lettuce", "tomato", "onion", "garlic", "pepper", "carrot", "celery",
-        "potato", "broccoli", "spinach", "kale", "cabbage", "zucchini",
-        "mushroom", "avocado", "lemon", "lime", "ginger", "cilantro",
-        "parsley", "basil", "mint", "green onion", "scallion", "jalapeño",
-        "jalapeno", "cucumber", "corn", "peas", "bean sprout", "apple",
-        "banana", "berry", "mango", "orange", "squash", "sweet potato",
-        "cauliflower", "asparagus", "eggplant", "beet", "radish",
+        "lettuce",
+        "tomato",
+        "onion",
+        "garlic",
+        "pepper",
+        "carrot",
+        "celery",
+        "potato",
+        "broccoli",
+        "spinach",
+        "kale",
+        "cabbage",
+        "zucchini",
+        "mushroom",
+        "avocado",
+        "lemon",
+        "lime",
+        "ginger",
+        "cilantro",
+        "parsley",
+        "basil",
+        "mint",
+        "green onion",
+        "scallion",
+        "jalapeño",
+        "jalapeno",
+        "cucumber",
+        "corn",
+        "peas",
+        "bean sprout",
+        "apple",
+        "banana",
+        "berry",
+        "mango",
+        "orange",
+        "squash",
+        "sweet potato",
+        "cauliflower",
+        "asparagus",
+        "eggplant",
+        "beet",
+        "radish",
     ],
     "Meat & Seafood": [
-        "chicken", "beef", "pork", "turkey", "salmon", "shrimp", "fish",
-        "sausage", "bacon", "ground", "steak", "thigh", "breast", "drumstick",
-        "lamb", "tilapia", "tuna", "crab", "meatball", "chorizo",
+        "chicken",
+        "beef",
+        "pork",
+        "turkey",
+        "salmon",
+        "shrimp",
+        "fish",
+        "sausage",
+        "bacon",
+        "ground",
+        "steak",
+        "thigh",
+        "breast",
+        "drumstick",
+        "lamb",
+        "tilapia",
+        "tuna",
+        "crab",
+        "meatball",
+        "chorizo",
     ],
     "Dairy": [
-        "cheese", "milk", "cream", "yogurt", "butter", "egg", "sour cream",
-        "cream cheese", "mozzarella", "parmesan", "cheddar", "ricotta",
-        "cottage cheese", "whipping cream", "half and half",
+        "cheese",
+        "milk",
+        "cream",
+        "yogurt",
+        "butter",
+        "egg",
+        "sour cream",
+        "cream cheese",
+        "mozzarella",
+        "parmesan",
+        "cheddar",
+        "ricotta",
+        "cottage cheese",
+        "whipping cream",
+        "half and half",
     ],
     "Pantry": [
-        "rice", "pasta", "noodle", "flour", "sugar", "oil", "vinegar",
-        "broth", "stock", "can", "canned", "beans", "lentil", "chickpea",
-        "coconut milk", "tomato sauce", "tomato paste", "soy sauce",
-        "tortilla", "bread", "bun", "pita", "wrap",
+        "rice",
+        "pasta",
+        "noodle",
+        "flour",
+        "sugar",
+        "oil",
+        "vinegar",
+        "broth",
+        "stock",
+        "can",
+        "canned",
+        "beans",
+        "lentil",
+        "chickpea",
+        "coconut milk",
+        "tomato sauce",
+        "tomato paste",
+        "soy sauce",
+        "tortilla",
+        "bread",
+        "bun",
+        "pita",
+        "wrap",
     ],
     "Spices & Condiments": [
-        "salt", "pepper", "cumin", "paprika", "oregano", "thyme", "cinnamon",
-        "chili powder", "curry", "turmeric", "cayenne", "nutmeg",
-        "garlic powder", "onion powder", "bay leaf", "red pepper flake",
-        "hot sauce", "sriracha", "mustard", "ketchup", "mayo", "mayonnaise",
-        "honey", "maple syrup", "worcestershire",
+        "salt",
+        "pepper",
+        "cumin",
+        "paprika",
+        "oregano",
+        "thyme",
+        "cinnamon",
+        "chili powder",
+        "curry",
+        "turmeric",
+        "cayenne",
+        "nutmeg",
+        "garlic powder",
+        "onion powder",
+        "bay leaf",
+        "red pepper flake",
+        "hot sauce",
+        "sriracha",
+        "mustard",
+        "ketchup",
+        "mayo",
+        "mayonnaise",
+        "honey",
+        "maple syrup",
+        "worcestershire",
     ],
     "Frozen": [
-        "frozen", "ice cream",
+        "frozen",
+        "ice cream",
     ],
 }
 
@@ -67,15 +174,31 @@ def normalize_unit(unit: str | None) -> str:
         return ""
     u = unit.lower().strip().rstrip(".")
     aliases = {
-        "tablespoon": "Tbsp", "tablespoons": "Tbsp", "tbsp": "Tbsp", "tbs": "Tbsp",
-        "teaspoon": "tsp", "teaspoons": "tsp", "tsp": "tsp",
-        "cup": "cup", "cups": "cup", "c": "cup",
-        "ounce": "oz", "ounces": "oz", "oz": "oz",
-        "pound": "lb", "pounds": "lb", "lb": "lb", "lbs": "lb",
-        "can": "can", "cans": "can",
-        "clove": "clove", "cloves": "clove",
-        "slice": "slice", "slices": "slice",
-        "piece": "piece", "pieces": "piece",
+        "tablespoon": "Tbsp",
+        "tablespoons": "Tbsp",
+        "tbsp": "Tbsp",
+        "tbs": "Tbsp",
+        "teaspoon": "tsp",
+        "teaspoons": "tsp",
+        "tsp": "tsp",
+        "cup": "cup",
+        "cups": "cup",
+        "c": "cup",
+        "ounce": "oz",
+        "ounces": "oz",
+        "oz": "oz",
+        "pound": "lb",
+        "pounds": "lb",
+        "lb": "lb",
+        "lbs": "lb",
+        "can": "can",
+        "cans": "can",
+        "clove": "clove",
+        "cloves": "clove",
+        "slice": "slice",
+        "slices": "slice",
+        "piece": "piece",
+        "pieces": "piece",
     }
     return aliases.get(u, unit)
 
@@ -130,7 +253,15 @@ def aggregate_ingredients(
 
     # Sort sections in preferred order
     ordered = {}
-    section_order = ["Produce", "Meat & Seafood", "Dairy", "Pantry", "Spices & Condiments", "Frozen", "Other"]
+    section_order = [
+        "Produce",
+        "Meat & Seafood",
+        "Dairy",
+        "Pantry",
+        "Spices & Condiments",
+        "Frozen",
+        "Other",
+    ]
     for s in section_order:
         if s in sections:
             ordered[s] = sorted(sections[s], key=lambda x: x["item"].lower())
@@ -144,7 +275,11 @@ def format_qty(qty: float) -> str:
 
     # Common fractions
     fractions = {
-        0.25: "1/4", 0.33: "1/3", 0.5: "1/2", 0.67: "2/3", 0.75: "3/4",
+        0.25: "1/4",
+        0.33: "1/3",
+        0.5: "1/2",
+        0.67: "2/3",
+        0.75: "3/4",
     }
 
     whole = int(qty)
@@ -226,12 +361,12 @@ def run_shopping_list(
 
     for recipe_name, total_servings in recipe_servings.items():
         if recipe_name not in recipe_files:
-            print(f"Warning: Recipe file not found: {recipe_name}", file=sys.stderr)
+            logger.warning("Recipe file not found: %s", recipe_name)
             continue
 
         recipe = parse_recipe_file(recipe_files[recipe_name])
         if not recipe or not recipe.parsed_ingredients:
-            print(f"Warning: No parsed ingredients for: {recipe_name}", file=sys.stderr)
+            logger.warning("No parsed ingredients for: %s", recipe_name)
             continue
 
         # Scale factor: total_servings / base_servings
@@ -248,7 +383,7 @@ def run_shopping_list(
     sections = aggregate_ingredients(ingredient_lists, pantry_staples)
 
     if not sections:
-        print("No ingredients to list.", file=sys.stderr)
+        logger.warning("No ingredients to list")
         return
 
     if output_format == "json":

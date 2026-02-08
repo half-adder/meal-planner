@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 DEFAULT_VAULT_PATH = Path.home() / "obsidian-sync" / "Personal"
@@ -22,7 +21,6 @@ def cmd_index(args: argparse.Namespace) -> None:
         cooking_path=get_cooking_path(args),
         dry_run=args.dry_run,
         limit=args.limit,
-        verbose=args.verbose,
         force=getattr(args, "force", False),
         skip_api=getattr(args, "skip_api", False),
     )
@@ -101,16 +99,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"Path to Obsidian vault (default: {DEFAULT_VAULT_PATH})",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="Logging verbosity (default: info)",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Also write logs to this file",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
     # index
     p_index = sub.add_parser("index", help="Parse recipe files and build index")
-    p_index.add_argument("--dry-run", action="store_true", help="Print stats without writing")
+    p_index.add_argument(
+        "--dry-run", action="store_true", help="Print stats without writing"
+    )
     p_index.add_argument("--limit", type=int, default=None, help="Process only N files")
-    p_index.add_argument("--verbose", action="store_true", help="Print each file as processed")
-    p_index.add_argument("--force", action="store_true", help="Re-parse even if hash matches")
-    p_index.add_argument("--skip-api", action="store_true", help="Use regex parser instead of Haiku")
+    p_index.add_argument(
+        "--force", action="store_true", help="Re-parse even if hash matches"
+    )
+    p_index.add_argument(
+        "--skip-api", action="store_true", help="Use regex parser instead of Haiku"
+    )
     p_index.set_defaults(func=cmd_index)
 
     # suggest
@@ -119,14 +134,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_suggest.add_argument("--max-time", type=int)
     p_suggest.add_argument("--cuisine", type=str)
     p_suggest.add_argument("--dietary-tags", type=str, help="Comma-separated tags")
-    p_suggest.add_argument("--exclude", type=str, help="Comma-separated recipe names to exclude")
-    p_suggest.add_argument("--available-ingredients", type=str, help="Comma-separated pantry items")
+    p_suggest.add_argument(
+        "--exclude", type=str, help="Comma-separated recipe names to exclude"
+    )
+    p_suggest.add_argument(
+        "--available-ingredients", type=str, help="Comma-separated pantry items"
+    )
     p_suggest.add_argument("--target-calories", type=int)
     p_suggest.add_argument("--target-protein", type=int)
     p_suggest.add_argument("--min-protein", type=int)
     p_suggest.add_argument("--max-calories", type=int)
     p_suggest.add_argument("--limit", type=int, default=10)
-    p_suggest.add_argument("--format", type=str, choices=["json", "table"], default="table")
+    p_suggest.add_argument(
+        "--format", type=str, choices=["json", "table"], default="table"
+    )
     p_suggest.set_defaults(func=cmd_suggest)
 
     # plan
@@ -136,31 +157,49 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--calories", type=int)
     p_plan.add_argument("--protein", type=int)
     p_plan.add_argument("--cook-days", type=str, help="Comma-separated day names")
-    p_plan.add_argument("--pantry", type=str, help="Comma-separated available ingredients")
-    p_plan.add_argument("--exclude", type=str, help="Comma-separated recipe names to exclude")
-    p_plan.add_argument("--format", type=str, choices=["json", "markdown"], default="markdown")
+    p_plan.add_argument(
+        "--pantry", type=str, help="Comma-separated available ingredients"
+    )
+    p_plan.add_argument(
+        "--exclude", type=str, help="Comma-separated recipe names to exclude"
+    )
+    p_plan.add_argument(
+        "--format", type=str, choices=["json", "markdown"], default="markdown"
+    )
     p_plan.set_defaults(func=cmd_plan)
 
     # shopping-list
     p_shop = sub.add_parser("shopping-list", help="Generate shopping list from plan")
     p_shop.add_argument("--plan-file", type=str, help="Path to plan JSON (or stdin)")
-    p_shop.add_argument("--pantry", type=str, help="Comma-separated pantry items to subtract")
-    p_shop.add_argument("--format", type=str, choices=["json", "markdown"], default="markdown")
+    p_shop.add_argument(
+        "--pantry", type=str, help="Comma-separated pantry items to subtract"
+    )
+    p_shop.add_argument(
+        "--format", type=str, choices=["json", "markdown"], default="markdown"
+    )
     p_shop.set_defaults(func=cmd_shopping_list)
 
     # scale
     p_scale = sub.add_parser("scale", help="Scale a recipe to N servings")
     p_scale.add_argument("recipe", type=str, help="Recipe name (fuzzy matched)")
     p_scale.add_argument("--servings", type=float, required=True)
-    p_scale.add_argument("--format", type=str, choices=["json", "markdown"], default="markdown")
+    p_scale.add_argument(
+        "--format", type=str, choices=["json", "markdown"], default="markdown"
+    )
     p_scale.set_defaults(func=cmd_scale)
 
     return parser
 
 
 def main() -> None:
+    from meal_planner.log import setup_logging
+
     parser = build_parser()
     args = parser.parse_args()
+
+    log_file = Path(args.log_file) if args.log_file else None
+    setup_logging(level=args.log_level, log_file=log_file)
+
     args.func(args)
 
 

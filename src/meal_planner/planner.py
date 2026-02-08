@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,7 +14,17 @@ from meal_planner.config import apply_cli_overrides, load_config
 from meal_planner.models import MealPlan, MealSlot, MealType, PrepStyle, Recipe
 from meal_planner.suggest import filter_recipes, load_all_recipes
 
-DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+logger = logging.getLogger(__name__)
+
+DAY_NAMES = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 
 
 def get_day_index(day_name: str) -> int:
@@ -52,7 +63,9 @@ def build_meal_plan(
     breakfast_candidates = filter_recipes(
         all_recipes,
         meal_type="breakfast",
-        max_time=max_batch_time if prep_styles["breakfast"] == "batch" else max_fresh_time,
+        max_time=max_batch_time
+        if prep_styles["breakfast"] == "batch"
+        else max_fresh_time,
         dietary_tags=dietary,
         exclude=exclude,
     )
@@ -78,10 +91,10 @@ def build_meal_plan(
     dinner_candidates = [r for r in dinner_candidates if r.calories is not None]
 
     if not breakfast_candidates:
-        print("Warning: No breakfast candidates found, using all recipes with calories", file=sys.stderr)
+        logger.warning("No breakfast candidates found, using all recipes with calories")
         breakfast_candidates = [r for r in all_recipes if r.calories is not None][:50]
     if not dinner_candidates:
-        print("Warning: No dinner candidates found, using all recipes with calories", file=sys.stderr)
+        logger.warning("No dinner candidates found, using all recipes with calories")
         dinner_candidates = [r for r in all_recipes if r.calories is not None][:100]
     if not lunch_candidates:
         # Lunch can draw from dinner candidates too
@@ -179,42 +192,62 @@ def build_meal_plan(
 
         # Breakfast contribution
         if batch_breakfast:
-            bf_base_cal = model.new_int_var(0, max(bf_cal_table) + 1, f"bf_base_cal_d{d}")
+            bf_base_cal = model.new_int_var(
+                0, max(bf_cal_table) + 1, f"bf_base_cal_d{d}"
+            )
             model.add_element(bf_recipe, bf_cal_table, bf_base_cal)
             bf_meal_cal = model.new_int_var(0, 100000, f"bf_meal_cal_d{d}")
             model.add_multiplication_equality(bf_meal_cal, [bf_base_cal, bf_servings])
             day_cal_terms.append(bf_meal_cal)
 
-            bf_base_pro = model.new_int_var(0, max(bf_pro_table) + 1, f"bf_base_pro_d{d}")
+            bf_base_pro = model.new_int_var(
+                0, max(bf_pro_table) + 1, f"bf_base_pro_d{d}"
+            )
             model.add_element(bf_recipe, bf_pro_table, bf_base_pro)
             bf_meal_pro = model.new_int_var(0, 100000, f"bf_meal_pro_d{d}")
             model.add_multiplication_equality(bf_meal_pro, [bf_base_pro, bf_servings])
             day_pro_terms.append(bf_meal_pro)
         else:
-            bf_base_cal = model.new_int_var(0, max(bf_cal_table) + 1, f"bf_base_cal_d{d}")
+            bf_base_cal = model.new_int_var(
+                0, max(bf_cal_table) + 1, f"bf_base_cal_d{d}"
+            )
             model.add_element(bf_recipe_vars[d], bf_cal_table, bf_base_cal)
             bf_meal_cal = model.new_int_var(0, 100000, f"bf_meal_cal_d{d}")
-            model.add_multiplication_equality(bf_meal_cal, [bf_base_cal, bf_serving_vars[d]])
+            model.add_multiplication_equality(
+                bf_meal_cal, [bf_base_cal, bf_serving_vars[d]]
+            )
             day_cal_terms.append(bf_meal_cal)
 
-            bf_base_pro = model.new_int_var(0, max(bf_pro_table) + 1, f"bf_base_pro_d{d}")
+            bf_base_pro = model.new_int_var(
+                0, max(bf_pro_table) + 1, f"bf_base_pro_d{d}"
+            )
             model.add_element(bf_recipe_vars[d], bf_pro_table, bf_base_pro)
             bf_meal_pro = model.new_int_var(0, 100000, f"bf_meal_pro_d{d}")
-            model.add_multiplication_equality(bf_meal_pro, [bf_base_pro, bf_serving_vars[d]])
+            model.add_multiplication_equality(
+                bf_meal_pro, [bf_base_pro, bf_serving_vars[d]]
+            )
             day_pro_terms.append(bf_meal_pro)
 
         # Dinner contribution
         if d in dinner_recipe_vars:
-            dn_base_cal = model.new_int_var(0, max(dn_cal_table) + 1, f"dn_base_cal_d{d}")
+            dn_base_cal = model.new_int_var(
+                0, max(dn_cal_table) + 1, f"dn_base_cal_d{d}"
+            )
             model.add_element(dinner_recipe_vars[d], dn_cal_table, dn_base_cal)
             dn_meal_cal = model.new_int_var(0, 100000, f"dn_meal_cal_d{d}")
-            model.add_multiplication_equality(dn_meal_cal, [dn_base_cal, dinner_serving_vars[d]])
+            model.add_multiplication_equality(
+                dn_meal_cal, [dn_base_cal, dinner_serving_vars[d]]
+            )
             day_cal_terms.append(dn_meal_cal)
 
-            dn_base_pro = model.new_int_var(0, max(dn_pro_table) + 1, f"dn_base_pro_d{d}")
+            dn_base_pro = model.new_int_var(
+                0, max(dn_pro_table) + 1, f"dn_base_pro_d{d}"
+            )
             model.add_element(dinner_recipe_vars[d], dn_pro_table, dn_base_pro)
             dn_meal_pro = model.new_int_var(0, 100000, f"dn_meal_pro_d{d}")
-            model.add_multiplication_equality(dn_meal_pro, [dn_base_pro, dinner_serving_vars[d]])
+            model.add_multiplication_equality(
+                dn_meal_pro, [dn_base_pro, dinner_serving_vars[d]]
+            )
             day_pro_terms.append(dn_meal_pro)
         else:
             # Leftover dinner from nearest previous cook day
@@ -225,35 +258,57 @@ def build_meal_plan(
                     break
             if prev_cook is None:
                 # Wrap around to last cook day
-                prev_cook = max(dinner_recipe_vars.keys()) if dinner_recipe_vars else None
+                prev_cook = (
+                    max(dinner_recipe_vars.keys()) if dinner_recipe_vars else None
+                )
 
             if prev_cook is not None:
-                dn_base_cal = model.new_int_var(0, max(dn_cal_table) + 1, f"dn_lo_base_cal_d{d}")
-                model.add_element(dinner_recipe_vars[prev_cook], dn_cal_table, dn_base_cal)
+                dn_base_cal = model.new_int_var(
+                    0, max(dn_cal_table) + 1, f"dn_lo_base_cal_d{d}"
+                )
+                model.add_element(
+                    dinner_recipe_vars[prev_cook], dn_cal_table, dn_base_cal
+                )
                 dn_meal_cal = model.new_int_var(0, 100000, f"dn_lo_meal_cal_d{d}")
                 # Leftover at 1.0 serving
                 lo_serving = model.new_constant(10)
-                model.add_multiplication_equality(dn_meal_cal, [dn_base_cal, lo_serving])
+                model.add_multiplication_equality(
+                    dn_meal_cal, [dn_base_cal, lo_serving]
+                )
                 day_cal_terms.append(dn_meal_cal)
 
-                dn_base_pro = model.new_int_var(0, max(dn_pro_table) + 1, f"dn_lo_base_pro_d{d}")
-                model.add_element(dinner_recipe_vars[prev_cook], dn_pro_table, dn_base_pro)
+                dn_base_pro = model.new_int_var(
+                    0, max(dn_pro_table) + 1, f"dn_lo_base_pro_d{d}"
+                )
+                model.add_element(
+                    dinner_recipe_vars[prev_cook], dn_pro_table, dn_base_pro
+                )
                 dn_meal_pro = model.new_int_var(0, 100000, f"dn_lo_meal_pro_d{d}")
-                model.add_multiplication_equality(dn_meal_pro, [dn_base_pro, lo_serving])
+                model.add_multiplication_equality(
+                    dn_meal_pro, [dn_base_pro, lo_serving]
+                )
                 day_pro_terms.append(dn_meal_pro)
 
         # Lunch contribution
         if d in lunch_recipe_vars:
-            ln_base_cal = model.new_int_var(0, max(ln_cal_table) + 1, f"ln_base_cal_d{d}")
+            ln_base_cal = model.new_int_var(
+                0, max(ln_cal_table) + 1, f"ln_base_cal_d{d}"
+            )
             model.add_element(lunch_recipe_vars[d], ln_cal_table, ln_base_cal)
             ln_meal_cal = model.new_int_var(0, 100000, f"ln_meal_cal_d{d}")
-            model.add_multiplication_equality(ln_meal_cal, [ln_base_cal, lunch_serving_vars[d]])
+            model.add_multiplication_equality(
+                ln_meal_cal, [ln_base_cal, lunch_serving_vars[d]]
+            )
             day_cal_terms.append(ln_meal_cal)
 
-            ln_base_pro = model.new_int_var(0, max(ln_pro_table) + 1, f"ln_base_pro_d{d}")
+            ln_base_pro = model.new_int_var(
+                0, max(ln_pro_table) + 1, f"ln_base_pro_d{d}"
+            )
             model.add_element(lunch_recipe_vars[d], ln_pro_table, ln_base_pro)
             ln_meal_pro = model.new_int_var(0, 100000, f"ln_meal_pro_d{d}")
-            model.add_multiplication_equality(ln_meal_pro, [ln_base_pro, lunch_serving_vars[d]])
+            model.add_multiplication_equality(
+                ln_meal_pro, [ln_base_pro, lunch_serving_vars[d]]
+            )
             day_pro_terms.append(ln_meal_pro)
         elif lunch_is_leftover:
             # Lunch from previous dinner leftovers
@@ -264,20 +319,34 @@ def build_meal_plan(
                     source_cook = cd
                     break
             if source_cook is None:
-                source_cook = max(dinner_recipe_vars.keys()) if dinner_recipe_vars else None
+                source_cook = (
+                    max(dinner_recipe_vars.keys()) if dinner_recipe_vars else None
+                )
 
             if source_cook is not None:
-                ln_base_cal = model.new_int_var(0, max(dn_cal_table) + 1, f"ln_lo_base_cal_d{d}")
-                model.add_element(dinner_recipe_vars[source_cook], dn_cal_table, ln_base_cal)
+                ln_base_cal = model.new_int_var(
+                    0, max(dn_cal_table) + 1, f"ln_lo_base_cal_d{d}"
+                )
+                model.add_element(
+                    dinner_recipe_vars[source_cook], dn_cal_table, ln_base_cal
+                )
                 ln_meal_cal = model.new_int_var(0, 100000, f"ln_lo_meal_cal_d{d}")
                 lo_serving = model.new_constant(10)
-                model.add_multiplication_equality(ln_meal_cal, [ln_base_cal, lo_serving])
+                model.add_multiplication_equality(
+                    ln_meal_cal, [ln_base_cal, lo_serving]
+                )
                 day_cal_terms.append(ln_meal_cal)
 
-                ln_base_pro = model.new_int_var(0, max(dn_pro_table) + 1, f"ln_lo_base_pro_d{d}")
-                model.add_element(dinner_recipe_vars[source_cook], dn_pro_table, ln_base_pro)
+                ln_base_pro = model.new_int_var(
+                    0, max(dn_pro_table) + 1, f"ln_lo_base_pro_d{d}"
+                )
+                model.add_element(
+                    dinner_recipe_vars[source_cook], dn_pro_table, ln_base_pro
+                )
                 ln_meal_pro = model.new_int_var(0, 100000, f"ln_lo_meal_pro_d{d}")
-                model.add_multiplication_equality(ln_meal_pro, [ln_base_pro, lo_serving])
+                model.add_multiplication_equality(
+                    ln_meal_pro, [ln_base_pro, lo_serving]
+                )
                 day_pro_terms.append(ln_meal_pro)
 
         # Day total cal/pro (in SCALE^2 units: cal*10 * servings*10 = cal*100)
@@ -310,8 +379,7 @@ def build_meal_plan(
     # Objective: minimize weighted deviations
     total_penalty = model.new_int_var(0, 100000000, "total_penalty")
     model.add(
-        total_penalty
-        == 10 * sum(cal_penalty_terms) + 15 * sum(pro_penalty_terms)
+        total_penalty == 10 * sum(cal_penalty_terms) + 15 * sum(pro_penalty_terms)
     )
     model.minimize(total_penalty)
 
@@ -321,7 +389,7 @@ def build_meal_plan(
     status = solver.solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        print("Solver could not find a feasible plan.", file=sys.stderr)
+        logger.error("Solver could not find a feasible plan")
         return None
 
     # Extract solution
@@ -482,21 +550,29 @@ def format_plan_markdown(plan: MealPlan) -> str:
             day_cal += slot.calories
             day_pro += slot.protein_g
 
-        lines.append(
-            f"| **Total** | | **{day_cal:.0f}** | **{day_pro:.0f}g** | |"
-        )
+        lines.append(f"| **Total** | | **{day_cal:.0f}** | **{day_pro:.0f}g** | |")
         lines.append("")
 
     # Weekly summary
     total_cal = sum(s.calories for s in plan.slots)
     total_pro = sum(s.protein_g for s in plan.slots)
     unique_recipes = len({s.recipe.name for s in plan.slots if s.recipe})
-    cook_days = len({s.day for s in plan.slots if s.prep_style == PrepStyle.FRESH and s.meal_type == MealType.DINNER})
+    cook_days = len(
+        {
+            s.day
+            for s in plan.slots
+            if s.prep_style == PrepStyle.FRESH and s.meal_type == MealType.DINNER
+        }
+    )
 
     lines.append("## Weekly Summary")
     lines.append("")
-    lines.append(f"- Total calories: ~{total_cal:.0f} (avg {total_cal / plan.days:.0f}/day)")
-    lines.append(f"- Total protein: ~{total_pro:.0f}g (avg {total_pro / plan.days:.0f}g/day)")
+    lines.append(
+        f"- Total calories: ~{total_cal:.0f} (avg {total_cal / plan.days:.0f}/day)"
+    )
+    lines.append(
+        f"- Total protein: ~{total_pro:.0f}g (avg {total_pro / plan.days:.0f}g/day)"
+    )
     lines.append(f"- Cook sessions: {cook_days}")
     lines.append(f"- Unique recipes: {unique_recipes}")
     lines.append("")

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from meal_planner.indexer import discover_recipe_files, parse_recipe_file
 from meal_planner.models import Recipe
+
+logger = logging.getLogger(__name__)
 
 
 def fuzzy_match_recipe(name: str, cooking_path: Path) -> Recipe | None:
@@ -101,20 +104,24 @@ def scale_recipe(recipe: Recipe, target_servings: float) -> dict:
                 scaled_qty = item.qty * scale_factor
                 qty_str = round_to_fraction(scaled_qty)
 
-            scaled_items.append({
-                "item": item.item,
-                "original_qty": item.qty,
-                "original_unit": item.unit,
-                "scaled_qty": scaled_qty,
-                "scaled_qty_display": qty_str,
-                "unit": item.unit or "",
-                "notes": item.notes,
-            })
+            scaled_items.append(
+                {
+                    "item": item.item,
+                    "original_qty": item.qty,
+                    "original_unit": item.unit,
+                    "scaled_qty": scaled_qty,
+                    "scaled_qty_display": qty_str,
+                    "unit": item.unit or "",
+                    "notes": item.notes,
+                }
+            )
 
-        scaled_sections.append({
-            "section": section.section,
-            "items": scaled_items,
-        })
+        scaled_sections.append(
+            {
+                "section": section.section,
+                "items": scaled_items,
+            }
+        )
 
     return {
         "name": recipe.name,
@@ -123,8 +130,12 @@ def scale_recipe(recipe: Recipe, target_servings: float) -> dict:
         "scale_factor": round(scale_factor, 2),
         "calories_per_serving": recipe.calories,
         "protein_per_serving": recipe.protein_g,
-        "total_calories": round(recipe.calories * target_servings, 1) if recipe.calories else None,
-        "total_protein": round(recipe.protein_g * target_servings, 1) if recipe.protein_g else None,
+        "total_calories": round(recipe.calories * target_servings, 1)
+        if recipe.calories
+        else None,
+        "total_protein": round(recipe.protein_g * target_servings, 1)
+        if recipe.protein_g
+        else None,
         "sections": scaled_sections,
     }
 
@@ -184,11 +195,13 @@ def run_scale(
     recipe = fuzzy_match_recipe(recipe_name, cooking_path)
 
     if not recipe:
-        print(f"Recipe not found: {recipe_name}", file=sys.stderr)
+        logger.error("Recipe not found: %s", recipe_name)
         sys.exit(1)
 
     if not recipe.parsed_ingredients:
-        print(f"Recipe '{recipe.name}' has no parsed ingredients. Run 'index' first.", file=sys.stderr)
+        logger.error(
+            "Recipe '%s' has no parsed ingredients. Run 'index' first.", recipe.name
+        )
         sys.exit(1)
 
     data = scale_recipe(recipe, servings)

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
-import sys
 from pathlib import Path
 
 import frontmatter
@@ -15,6 +15,8 @@ from meal_planner.models import (
     ParsedIngredient,
     Recipe,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_servings(raw: str | int | float | None) -> int | None:
@@ -242,7 +244,6 @@ def run_index(
     cooking_path: Path,
     dry_run: bool = False,
     limit: int | None = None,
-    verbose: bool = False,
     force: bool = False,
     skip_api: bool = False,
 ) -> None:
@@ -266,8 +267,7 @@ def run_index(
         recipe = parse_recipe_file(f)
         if recipe is None:
             stats["parse_errors"] += 1
-            if verbose:
-                print(f"  SKIP (not a recipe or parse error): {f.name}", file=sys.stderr)
+            logger.debug("SKIP (not a recipe or parse error): %s", f.name)
             continue
 
         stats["parsed_ok"] += 1
@@ -284,14 +284,15 @@ def run_index(
         else:
             stats["servings_unparseable"] += 1
 
-        if verbose:
-            print(
-                f"  {recipe.name}: servings={recipe.servings} "
-                f"cal={recipe.calories} protein={recipe.protein_g} "
-                f"time={recipe.total_time_min}min "
-                f"ingredients={'yes' if recipe.raw_ingredients else 'no'}",
-                file=sys.stderr,
-            )
+        logger.debug(
+            "%s: servings=%s cal=%s protein=%s time=%smin ingredients=%s",
+            recipe.name,
+            recipe.servings,
+            recipe.calories,
+            recipe.protein_g,
+            recipe.total_time_min,
+            "yes" if recipe.raw_ingredients else "no",
+        )
 
     if dry_run:
         print(json.dumps(stats, indent=2))
@@ -301,9 +302,8 @@ def run_index(
     if not skip_api:
         from meal_planner.haiku_parser import parse_all_ingredients
 
-        parse_all_ingredients(recipes, cooking_path, force=force, verbose=verbose)
+        parse_all_ingredients(recipes, cooking_path, force=force)
     else:
-        if verbose:
-            print("Skipping API parsing (--skip-api)", file=sys.stderr)
+        logger.info("Skipping API parsing (--skip-api)")
 
     print(json.dumps(stats, indent=2))
