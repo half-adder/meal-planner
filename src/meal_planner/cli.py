@@ -67,13 +67,27 @@ def cmd_plan(args: argparse.Namespace) -> None:
 
 
 def cmd_shopping_list(args: argparse.Namespace) -> None:
-    print("shopping-list: not yet implemented", file=sys.stderr)
-    sys.exit(1)
+    from meal_planner.shopping import run_shopping_list
+
+    vault = Path(args.vault_path) if args.vault_path else DEFAULT_VAULT_PATH
+    run_shopping_list(
+        cooking_path=get_cooking_path(args),
+        vault_path=vault,
+        plan_file=args.plan_file,
+        pantry=args.pantry,
+        output_format=args.format,
+    )
 
 
 def cmd_scale(args: argparse.Namespace) -> None:
-    print("scale: not yet implemented", file=sys.stderr)
-    sys.exit(1)
+    from meal_planner.scaler import run_scale
+
+    run_scale(
+        cooking_path=get_cooking_path(args),
+        recipe_name=args.recipe,
+        servings=args.servings,
+        output_format=args.format,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
