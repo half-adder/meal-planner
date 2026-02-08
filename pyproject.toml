@@ -1,0 +1,22 @@
+[project]
+name = "meal-planner"
+version = "0.1.0"
+description = "Weekly meal planning from Obsidian recipe notes with CP-SAT optimization"
+readme = "README.md"
+authors = [
+    { name = "Sean Johnsen", email = "sean.b.johnsen@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.79.0",
+    "ortools>=9.15.6755",
+    "python-frontmatter>=1.1.0",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+meal-planner = "meal_planner.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

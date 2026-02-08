@@ -1,0 +1,126 @@
+"""CLI entry point for the meal planner."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+DEFAULT_VAULT_PATH = Path.home() / "obsidian-sync" / "Personal"
+DEFAULT_COOKING_DIR = "03. Resources/Cooking"
+
+
+def get_cooking_path(args: argparse.Namespace) -> Path:
+    vault = Path(args.vault_path) if args.vault_path else DEFAULT_VAULT_PATH
+    return vault / DEFAULT_COOKING_DIR
+
+
+def cmd_index(args: argparse.Namespace) -> None:
+    from meal_planner.indexer import run_index
+
+    run_index(
+        cooking_path=get_cooking_path(args),
+        dry_run=args.dry_run,
+        limit=args.limit,
+        verbose=args.verbose,
+        force=getattr(args, "force", False),
+        skip_api=getattr(args, "skip_api", False),
+    )
+
+
+def cmd_suggest(args: argparse.Namespace) -> None:
+    print("suggest: not yet implemented", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_plan(args: argparse.Namespace) -> None:
+    print("plan: not yet implemented", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_shopping_list(args: argparse.Namespace) -> None:
+    print("shopping-list: not yet implemented", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_scale(args: argparse.Namespace) -> None:
+    print("scale: not yet implemented", file=sys.stderr)
+    sys.exit(1)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="meal-planner",
+        description="Weekly meal planning from Obsidian recipe notes",
+    )
+    parser.add_argument(
+        "--vault-path",
+        type=str,
+        default=None,
+        help=f"Path to Obsidian vault (default: {DEFAULT_VAULT_PATH})",
+    )
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # index
+    p_index = sub.add_parser("index", help="Parse recipe files and build index")
+    p_index.add_argument("--dry-run", action="store_true", help="Print stats without writing")
+    p_index.add_argument("--limit", type=int, default=None, help="Process only N files")
+    p_index.add_argument("--verbose", action="store_true", help="Print each file as processed")
+    p_index.add_argument("--force", action="store_true", help="Re-parse even if hash matches")
+    p_index.add_argument("--skip-api", action="store_true", help="Use regex parser instead of Haiku")
+    p_index.set_defaults(func=cmd_index)
+
+    # suggest
+    p_suggest = sub.add_parser("suggest", help="Find and rank recipe candidates")
+    p_suggest.add_argument("--meal-type", type=str)
+    p_suggest.add_argument("--max-time", type=int)
+    p_suggest.add_argument("--cuisine", type=str)
+    p_suggest.add_argument("--dietary-tags", type=str, help="Comma-separated tags")
+    p_suggest.add_argument("--exclude", type=str, help="Comma-separated recipe names to exclude")
+    p_suggest.add_argument("--available-ingredients", type=str, help="Comma-separated pantry items")
+    p_suggest.add_argument("--target-calories", type=int)
+    p_suggest.add_argument("--target-protein", type=int)
+    p_suggest.add_argument("--min-protein", type=int)
+    p_suggest.add_argument("--max-calories", type=int)
+    p_suggest.add_argument("--limit", type=int, default=10)
+    p_suggest.add_argument("--format", type=str, choices=["json", "table"], default="table")
+    p_suggest.set_defaults(func=cmd_suggest)
+
+    # plan
+    p_plan = sub.add_parser("plan", help="Generate optimized weekly meal plan")
+    p_plan.add_argument("--start-date", type=str, help="YYYY-MM-DD")
+    p_plan.add_argument("--days", type=int, default=7)
+    p_plan.add_argument("--calories", type=int)
+    p_plan.add_argument("--protein", type=int)
+    p_plan.add_argument("--cook-days", type=str, help="Comma-separated day names")
+    p_plan.add_argument("--pantry", type=str, help="Comma-separated available ingredients")
+    p_plan.add_argument("--exclude", type=str, help="Comma-separated recipe names to exclude")
+    p_plan.add_argument("--format", type=str, choices=["json", "markdown"], default="markdown")
+    p_plan.set_defaults(func=cmd_plan)
+
+    # shopping-list
+    p_shop = sub.add_parser("shopping-list", help="Generate shopping list from plan")
+    p_shop.add_argument("--plan-file", type=str, help="Path to plan JSON (or stdin)")
+    p_shop.add_argument("--pantry", type=str, help="Comma-separated pantry items to subtract")
+    p_shop.add_argument("--format", type=str, choices=["json", "markdown"], default="markdown")
+    p_shop.set_defaults(func=cmd_shopping_list)
+
+    # scale
+    p_scale = sub.add_parser("scale", help="Scale a recipe to N servings")
+    p_scale.add_argument("recipe", type=str, help="Recipe name (fuzzy matched)")
+    p_scale.add_argument("--servings", type=float, required=True)
+    p_scale.add_argument("--format", type=str, choices=["json", "markdown"], default="markdown")
+    p_scale.set_defaults(func=cmd_scale)
+
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
