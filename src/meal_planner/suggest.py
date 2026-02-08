@@ -19,6 +19,7 @@ MEAL_TYPE_MAP = {
     "breakfast": {"breakfast"},
     "lunch": {"lunch", "main course", "soup"},
     "dinner": {"dinner", "main course", "soup", "curry"},
+    "snack": {"snack", "appetizer", "dessert", "side", "side dish"},
 }
 
 

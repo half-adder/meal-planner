@@ -13,19 +13,21 @@ DEFAULTS = {
         "daily_calories": 2200,
         "daily_protein_g": 150,
         "meal_allocation": {
-            "breakfast": 0.25,
-            "lunch": 0.35,
-            "dinner": 0.40,
+            "breakfast": 0.20,
+            "lunch": 0.30,
+            "dinner": 0.35,
+            "snack": 0.15,
         },
     },
     "prep_styles": {
         "breakfast": "batch",
         "lunch": "leftover",
         "dinner": "fresh",
+        "snack": "fresh",
     },
     "schedule": {
         "cook_days": ["sunday", "wednesday"],
-        "meals_per_day": ["breakfast", "lunch", "dinner"],
+        "meals_per_day": ["breakfast", "lunch", "dinner", "snack"],
         "plan_days": 7,
     },
     "preferences": {

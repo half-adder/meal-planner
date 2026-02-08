@@ -100,6 +100,23 @@ def build_meal_plan(
         # Lunch can draw from dinner candidates too
         lunch_candidates = dinner_candidates[:100]
 
+    # Snack candidates (broader pool: snack, appetizer, dessert, side)
+    snacks_enabled = "snack" in config["schedule"]["meals_per_day"]
+    snack_candidates: list[Recipe] = []
+    if snacks_enabled:
+        snack_candidates = filter_recipes(
+            all_recipes,
+            meal_type="snack",
+            max_time=max_fresh_time,
+            dietary_tags=dietary,
+            exclude=exclude,
+        )
+        snack_candidates = [r for r in snack_candidates if r.calories is not None]
+        if not snack_candidates:
+            logger.warning("No snack candidates found, using all recipes with calories")
+            snack_candidates = [r for r in all_recipes if r.calories is not None][:80]
+        snack_candidates = snack_candidates[:80]
+
     # Limit candidate pools for solver performance
     breakfast_candidates = breakfast_candidates[:50]
     lunch_candidates = lunch_candidates[:80]
@@ -107,14 +124,14 @@ def build_meal_plan(
 
     # Per-meal calorie/protein targets
     targets = {}
-    for meal in ["breakfast", "lunch", "dinner"]:
+    for meal in ["breakfast", "lunch", "dinner"] + (["snack"] if snacks_enabled else []):
         targets[meal] = {
             "cal": daily_cal * meal_alloc[meal],
             "pro": daily_pro * meal_alloc[meal],
         }
 
     # Serving options (fixed-point: multiply by 10 internally)
-    SERVING_OPTIONS = [10, 15, 20, 25, 30]  # 1.0, 1.5, 2.0, 2.5, 3.0
+    SERVING_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40]  # 0.5, 1.0 .. 4.0
 
     # Build CP-SAT model
     model = cp_model.CpModel()
@@ -155,6 +172,10 @@ def build_meal_plan(
             cp_model.Domain.from_values(SERVING_OPTIONS), f"dn_servings_d{d}"
         )
 
+    # Leftover serving variables (for variable leftover portions)
+    dinner_lo_serving_vars: dict[int, object] = {}
+    lunch_lo_serving_vars: dict[int, object] = {}
+
     # Lunch variables
     lunch_recipe_vars = {}
     lunch_serving_vars = {}
@@ -169,6 +190,18 @@ def build_meal_plan(
         lunch_serving_vars[d] = model.new_int_var_from_domain(
             cp_model.Domain.from_values(SERVING_OPTIONS), f"ln_servings_d{d}"
         )
+
+    # Snack variables (one per day, always fresh — no batch/leftover logic)
+    snack_recipe_vars: dict[int, object] = {}
+    snack_serving_vars: dict[int, object] = {}
+    if snacks_enabled:
+        for d in range(num_days):
+            snack_recipe_vars[d] = model.new_int_var(
+                0, len(snack_candidates) - 1, f"sn_recipe_d{d}"
+            )
+            snack_serving_vars[d] = model.new_int_var_from_domain(
+                cp_model.Domain.from_values(SERVING_OPTIONS), f"sn_servings_d{d}"
+            )
 
     # Objective: minimize calorie and protein deviation
     # We use element constraints to look up recipe calories/protein
@@ -185,6 +218,10 @@ def build_meal_plan(
     dn_pro_table = [int((r.protein_g or 0) * SCALE) for r in dinner_candidates]
     ln_cal_table = [int((r.calories or 0) * SCALE) for r in lunch_candidates]
     ln_pro_table = [int((r.protein_g or 0) * SCALE) for r in lunch_candidates]
+
+    if snacks_enabled:
+        sn_cal_table = [int((r.calories or 0) * SCALE) for r in snack_candidates]
+        sn_pro_table = [int((r.protein_g or 0) * SCALE) for r in snack_candidates]
 
     for d in range(num_days):
         day_cal_terms = []
@@ -263,6 +300,11 @@ def build_meal_plan(
                 )
 
             if prev_cook is not None:
+                lo_serving = model.new_int_var_from_domain(
+                    cp_model.Domain.from_values(SERVING_OPTIONS),
+                    f"dn_lo_servings_d{d}",
+                )
+                dinner_lo_serving_vars[d] = lo_serving
                 dn_base_cal = model.new_int_var(
                     0, max(dn_cal_table) + 1, f"dn_lo_base_cal_d{d}"
                 )
@@ -270,8 +312,6 @@ def build_meal_plan(
                     dinner_recipe_vars[prev_cook], dn_cal_table, dn_base_cal
                 )
                 dn_meal_cal = model.new_int_var(0, 100000, f"dn_lo_meal_cal_d{d}")
-                # Leftover at 1.0 serving
-                lo_serving = model.new_constant(10)
                 model.add_multiplication_equality(
                     dn_meal_cal, [dn_base_cal, lo_serving]
                 )
@@ -324,6 +364,11 @@ def build_meal_plan(
                 )
 
             if source_cook is not None:
+                lo_serving = model.new_int_var_from_domain(
+                    cp_model.Domain.from_values(SERVING_OPTIONS),
+                    f"ln_lo_servings_d{d}",
+                )
+                lunch_lo_serving_vars[d] = lo_serving
                 ln_base_cal = model.new_int_var(
                     0, max(dn_cal_table) + 1, f"ln_lo_base_cal_d{d}"
                 )
@@ -331,7 +376,6 @@ def build_meal_plan(
                     dinner_recipe_vars[source_cook], dn_cal_table, ln_base_cal
                 )
                 ln_meal_cal = model.new_int_var(0, 100000, f"ln_lo_meal_cal_d{d}")
-                lo_serving = model.new_constant(10)
                 model.add_multiplication_equality(
                     ln_meal_cal, [ln_base_cal, lo_serving]
                 )
@@ -348,6 +392,20 @@ def build_meal_plan(
                     ln_meal_pro, [ln_base_pro, lo_serving]
                 )
                 day_pro_terms.append(ln_meal_pro)
+
+        # Snack contribution
+        if snacks_enabled and d in snack_recipe_vars:
+            sn_base_cal = model.new_int_var(0, max(sn_cal_table) + 1, f"sn_base_cal_d{d}")
+            model.add_element(snack_recipe_vars[d], sn_cal_table, sn_base_cal)
+            sn_meal_cal = model.new_int_var(0, 100000, f"sn_meal_cal_d{d}")
+            model.add_multiplication_equality(sn_meal_cal, [sn_base_cal, snack_serving_vars[d]])
+            day_cal_terms.append(sn_meal_cal)
+
+            sn_base_pro = model.new_int_var(0, max(sn_pro_table) + 1, f"sn_base_pro_d{d}")
+            model.add_element(snack_recipe_vars[d], sn_pro_table, sn_base_pro)
+            sn_meal_pro = model.new_int_var(0, 100000, f"sn_meal_pro_d{d}")
+            model.add_multiplication_equality(sn_meal_pro, [sn_base_pro, snack_serving_vars[d]])
+            day_pro_terms.append(sn_meal_pro)
 
         # Day total cal/pro (in SCALE^2 units: cal*10 * servings*10 = cal*100)
         day_total_cal = model.new_int_var(0, 1000000, f"day_total_cal_d{d}")
@@ -375,6 +433,10 @@ def build_meal_plan(
     # If lunch has its own recipe vars, encourage variety there too
     if len(lunch_recipe_vars) > 1:
         model.add_all_different(list(lunch_recipe_vars.values()))
+
+    # Snack variety
+    if len(snack_recipe_vars) > 1:
+        model.add_all_different(list(snack_recipe_vars.values()))
 
     # Objective: minimize weighted deviations
     total_penalty = model.new_int_var(0, 100000000, "total_penalty")
@@ -452,7 +514,7 @@ def build_meal_plan(
                 prev_cook = max(dinner_recipe_vars.keys())
             dn_idx = solver.value(dinner_recipe_vars[prev_cook])
             dn_r = dinner_candidates[dn_idx]
-            dn_svgs = 1.0
+            dn_svgs = solver.value(dinner_lo_serving_vars[d]) / SCALE
             dn_prep = PrepStyle.LEFTOVER
 
         plan.slots.append(
@@ -485,7 +547,7 @@ def build_meal_plan(
                 source_cook = max(dinner_recipe_vars.keys())
             ln_idx = solver.value(dinner_recipe_vars[source_cook])
             ln_r = dinner_candidates[ln_idx]
-            ln_svgs = 1.0
+            ln_svgs = solver.value(lunch_lo_serving_vars[d]) / SCALE
             ln_prep = PrepStyle.LEFTOVER
         else:
             continue
@@ -502,6 +564,24 @@ def build_meal_plan(
                 protein_g=(ln_r.protein_g or 0) * ln_svgs,
             )
         )
+
+        # Snack
+        if snacks_enabled and d in snack_recipe_vars:
+            sn_idx = solver.value(snack_recipe_vars[d])
+            sn_svgs = solver.value(snack_serving_vars[d]) / SCALE
+            sn_r = snack_candidates[sn_idx]
+            plan.slots.append(
+                MealSlot(
+                    day=d,
+                    day_name=day_name,
+                    meal_type=MealType.SNACK,
+                    prep_style=PrepStyle.FRESH,
+                    recipe=sn_r,
+                    servings=sn_svgs,
+                    calories=(sn_r.calories or 0) * sn_svgs,
+                    protein_g=(sn_r.protein_g or 0) * sn_svgs,
+                )
+            )
 
     return plan
 
@@ -617,6 +697,7 @@ def run_plan(
     pantry: str | None = None,
     exclude: str | None = None,
     output_format: str = "markdown",
+    snacks: bool = False,
 ) -> None:
     """CLI entry point for plan command."""
     config = load_config(vault_path)
@@ -627,6 +708,17 @@ def run_plan(
         cook_days=cook_days,
         days=days,
     )
+
+    if snacks:
+        if "snack" not in config["schedule"]["meals_per_day"]:
+            config["schedule"]["meals_per_day"].append("snack")
+        if "snack" not in config["nutrition"]["meal_allocation"]:
+            # Redistribute: take 15% proportionally from existing meals
+            alloc = config["nutrition"]["meal_allocation"]
+            total_existing = sum(alloc.values())
+            for k in alloc:
+                alloc[k] = alloc[k] / total_existing * 0.85
+            alloc["snack"] = 0.15
 
     pantry_items = [p.strip() for p in pantry.split(",")] if pantry else None
     exclude_list = [e.strip() for e in exclude.split(",")] if exclude else None

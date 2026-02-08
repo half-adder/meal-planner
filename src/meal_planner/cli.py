@@ -62,6 +62,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
         pantry=args.pantry,
         exclude=args.exclude,
         output_format=args.format,
+        snacks=args.snacks,
     )
 
 
@@ -166,6 +167,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_plan.add_argument(
         "--exclude", type=str, help="Comma-separated recipe names to exclude"
+    )
+    p_plan.add_argument(
+        "--snacks", action="store_true", help="Include daily snack slot"
     )
     p_plan.add_argument(
         "--format", type=str, choices=["json", "markdown"], default="markdown"
