@@ -1,19 +1,16 @@
-"""Haiku-powered ingredient parsing with frontmatter caching."""
+"""Haiku-powered ingredient parsing via Claude CLI with frontmatter caching."""
 
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
-import time
 from pathlib import Path
 
-import anthropic
 import frontmatter
 
 from meal_planner.indexer import compute_ingredients_hash
-from meal_planner.models import IngredientSection, ParsedIngredient, Recipe
-
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
+from meal_planner.models import Recipe
 
 PARSE_PROMPT = """\
 Parse these recipe ingredients into structured JSON. Return a JSON array of section objects.
@@ -38,21 +35,23 @@ Ingredients:
 
 
 def call_haiku(raw_ingredients: str) -> list[dict] | None:
-    """Call Claude Haiku to parse raw ingredient text into structured JSON."""
-    client = anthropic.Anthropic()
+    """Call Claude Haiku via the claude CLI to parse ingredients."""
+    prompt = PARSE_PROMPT + raw_ingredients
 
     try:
-        response = client.messages.create(
-            model=HAIKU_MODEL,
-            max_tokens=4096,
-            messages=[
-                {
-                    "role": "user",
-                    "content": PARSE_PROMPT + raw_ingredients,
-                }
-            ],
+        result = subprocess.run(
+            ["claude", "--model", "haiku", "-p"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
-        text = response.content[0].text.strip()
+
+        if result.returncode != 0:
+            print(f"  claude CLI error: {result.stderr.strip()}", file=sys.stderr)
+            return None
+
+        text = result.stdout.strip()
 
         # Strip markdown fences if present
         if text.startswith("```"):
@@ -62,8 +61,14 @@ def call_haiku(raw_ingredients: str) -> list[dict] | None:
             text = text.strip()
 
         return json.loads(text)
-    except (anthropic.APIError, json.JSONDecodeError, IndexError, KeyError) as e:
-        print(f"  Haiku parse error: {e}", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print("  claude CLI timed out", file=sys.stderr)
+        return None
+    except json.JSONDecodeError as e:
+        print(f"  JSON parse error: {e}", file=sys.stderr)
+        return None
+    except FileNotFoundError:
+        print("  'claude' CLI not found. Install it first.", file=sys.stderr)
         return None
 
 
@@ -111,7 +116,7 @@ def parse_all_ingredients(
     force: bool = False,
     verbose: bool = False,
 ) -> None:
-    """Parse ingredients for all recipes using Claude Haiku."""
+    """Parse ingredients for all recipes using Claude Haiku via CLI."""
     need_parsing: list[Recipe] = []
 
     for recipe in recipes:
@@ -162,10 +167,6 @@ def parse_all_ingredients(
         if verbose:
             total_items = sum(len(s.get("items", [])) for s in sections)
             print(f"OK ({total_items} ingredients)", file=sys.stderr)
-
-        # Small delay to avoid rate limits
-        if i < len(need_parsing) - 1:
-            time.sleep(0.05)
 
     print(
         f"Done: {parsed_count} parsed, {error_count} errors, "
