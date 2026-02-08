@@ -29,13 +29,41 @@ def cmd_index(args: argparse.Namespace) -> None:
 
 
 def cmd_suggest(args: argparse.Namespace) -> None:
-    print("suggest: not yet implemented", file=sys.stderr)
-    sys.exit(1)
+    from meal_planner.suggest import run_suggest
+
+    run_suggest(
+        cooking_path=get_cooking_path(args),
+        meal_type=args.meal_type,
+        max_time=args.max_time,
+        cuisine=args.cuisine,
+        dietary_tags=args.dietary_tags,
+        exclude=args.exclude,
+        available_ingredients=args.available_ingredients,
+        target_calories=args.target_calories,
+        target_protein=args.target_protein,
+        min_protein=args.min_protein,
+        max_calories=args.max_calories,
+        limit=args.limit,
+        output_format=args.format,
+    )
 
 
 def cmd_plan(args: argparse.Namespace) -> None:
-    print("plan: not yet implemented", file=sys.stderr)
-    sys.exit(1)
+    from meal_planner.planner import run_plan
+
+    vault = Path(args.vault_path) if args.vault_path else DEFAULT_VAULT_PATH
+    run_plan(
+        cooking_path=get_cooking_path(args),
+        vault_path=vault,
+        start_date=args.start_date,
+        days=args.days,
+        calories=args.calories,
+        protein=args.protein,
+        cook_days=args.cook_days,
+        pantry=args.pantry,
+        exclude=args.exclude,
+        output_format=args.format,
+    )
 
 
 def cmd_shopping_list(args: argparse.Namespace) -> None:
