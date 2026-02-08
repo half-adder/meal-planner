@@ -77,6 +77,7 @@ class MealSlot:
     servings: float = 1.0
     calories: float = 0.0
     protein_g: float = 0.0
+    pinned: bool = False
 
 
 @dataclass

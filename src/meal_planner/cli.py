@@ -63,6 +63,11 @@ def cmd_plan(args: argparse.Namespace) -> None:
         exclude=args.exclude,
         output_format=args.format,
         snacks=args.snacks,
+        pins=args.pin,
+        shopping_list=args.shopping_list,
+        save_plan=args.save_plan,
+        recipes=args.recipes,
+        require_groups=args.require_group,
     )
 
 
@@ -170,6 +175,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_plan.add_argument(
         "--snacks", action="store_true", help="Include daily snack slot"
+    )
+    p_plan.add_argument(
+        "--pin",
+        action="append",
+        default=[],
+        help='Pin a recipe to a meal slot. Format: "day:meal:Recipe Name". '
+             'day: a day name, "all", "even", or "odd". '
+             'meal: breakfast/lunch/dinner/snack. Repeatable.',
+    )
+    p_plan.add_argument(
+        "--require-group",
+        action="append",
+        default=[],
+        help="Require at least one dinner from this ingredient group "
+             "(e.g., beef, poultry, seafood). Repeatable.",
+    )
+    p_plan.add_argument(
+        "--recipes",
+        action="store_true",
+        help="Include scaled recipes with ingredients and directions in plan output",
+    )
+    p_plan.add_argument(
+        "--shopping-list",
+        action="store_true",
+        help="Append a shopping list to the plan output",
+    )
+    p_plan.add_argument(
+        "--save-plan",
+        nargs="?",
+        const="auto",
+        default=None,
+        help="Save plan JSON to file. Optional path; defaults to meal-plan-YYYY-MM-DD.json",
     )
     p_plan.add_argument(
         "--format", type=str, choices=["json", "markdown"], default="markdown"

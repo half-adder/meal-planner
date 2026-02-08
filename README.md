@@ -7,10 +7,13 @@ Reads a database of recipe markdown files (with YAML frontmatter for nutrition, 
 ## Features
 
 - **Constraint-optimized planning** — Google OR-Tools CP-SAT solver minimizes calorie/protein deviation while enforcing variety, prep style, and cook day constraints
+- **Ingredient diversity** — Ensures dinner recipes use different protein sources (poultry, beef, seafood, etc.) via ingredient group constraints. Optionally require specific groups with `--require-group`
 - **Multi-serving scoring** — Tests 1x through 3x servings per recipe to find the best macro fit
 - **Smart ingredient parsing** — Uses Claude Haiku (via CLI) to parse free-text ingredient lists into structured `{qty, unit, item, notes}` data, cached in recipe frontmatter
+- **Scaled recipes in output** — `--recipes` flag includes full scaled ingredients and cooking directions for each unique recipe in the plan
 - **Shopping list generation** — Aggregates and scales ingredients across the plan, groups by store section, subtracts pantry staples
 - **Recipe scaling** — Fuzzy-match recipes by name and scale to any serving count with practical fraction rounding
+- **Pin & exclude** — Lock specific recipes to meal slots with `--pin`, or exclude recipes with `--exclude`
 - **Claude Code skill** — Conversational `/meal-plan` command for interactive planning with recipe swaps
 
 ## Installation
@@ -58,6 +61,7 @@ preferences:
   dietary_tags: []
   cuisines_excluded: []
   ingredients_excluded: []
+  required_ingredient_groups: []  # e.g. [beef, poultry] — at least one dinner per group
 
 pantry_staples:
   - salt
@@ -147,6 +151,14 @@ uv run meal-planner plan --calories 1800 --protein 120 --days 5
 # Different cook schedule
 uv run meal-planner plan --cook-days "monday,thursday,saturday"
 
+# Include scaled recipes and shopping list, save plan JSON
+uv run meal-planner plan --recipes --shopping-list --save-plan
+
+# Pin recipes and require ingredient groups
+uv run meal-planner plan --pin "all:breakfast:Kefir Smoothie" \
+  --require-group beef --require-group poultry \
+  --exclude "Spaetzle,Homemade Chili Recipe"
+
 # JSON output for piping
 uv run meal-planner plan --format json
 ```
@@ -179,23 +191,27 @@ uv run meal-planner scale "vegetable curry" --servings 8 --format json
 
 ```
 src/meal_planner/
-├── cli.py          # argparse entry point with subcommands
-├── models.py       # Recipe, MealSlot, MealPlan dataclasses
-├── indexer.py      # Frontmatter parsing, ingredient extraction
-├── haiku_parser.py # Claude Haiku ingredient parsing via CLI
-├── config.py       # Preferences loading with defaults + overrides
-├── suggest.py      # Filtering + multi-dimension scoring
-├── planner.py      # CP-SAT constraint optimization
-├── shopping.py     # Ingredient aggregation + store section grouping
-└── scaler.py       # Recipe scaling with fraction rounding
+├── cli.py               # argparse entry point with subcommands
+├── models.py            # Recipe, MealSlot, MealPlan dataclasses
+├── indexer.py           # Frontmatter parsing, ingredient extraction
+├── haiku_parser.py      # Claude Haiku ingredient parsing via CLI
+├── config.py            # Preferences loading with defaults + overrides
+├── suggest.py           # Filtering + multi-dimension scoring
+├── planner.py           # CP-SAT constraint optimization
+├── pins.py              # Pin parsing and resolution
+├── ingredient_groups.py # Ingredient group normalization for diversity constraints
+├── recipe_renderer.py   # Scaled recipe rendering (ingredients + directions)
+├── shopping.py          # Ingredient aggregation + store section grouping
+└── scaler.py            # Recipe scaling with fraction rounding
 ```
 
 ### How the planner works
 
-1. **Pre-filter** — Reduces ~1,700 recipes to ~50-200 candidates per meal type based on hard filters (meal type, dietary tags, time constraints)
+1. **Pre-filter** — Reduces ~1,700 recipes to candidates per meal type based on hard filters (meal type, dietary tags, time constraints)
 2. **Model** — CP-SAT solver assigns recipes to meal slots with serving multipliers (1x-3x), respecting batch/leftover/fresh prep styles and cook day schedules
-3. **Optimize** — Minimizes weighted calorie and protein deviation from targets, with variety enforced via AllDifferent constraints on cook-day recipes
-4. **Extract** — Solution maps back to recipe objects with serving counts and macro totals
+3. **Diversity** — AllDifferent constraints on recipe indices and ingredient groups ensure variety. Optional required-group constraints guarantee specific protein sources appear
+4. **Optimize** — Minimizes weighted calorie and protein deviation from targets
+5. **Extract** — Solution maps back to recipe objects with serving counts and macro totals
 
 ### Ingredient parsing
 

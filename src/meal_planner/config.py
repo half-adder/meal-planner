@@ -36,6 +36,7 @@ DEFAULTS = {
         "dietary_tags": [],
         "cuisines_excluded": [],
         "ingredients_excluded": [],
+        "required_ingredient_groups": [],
     },
     "pantry_staples": [
         "salt",

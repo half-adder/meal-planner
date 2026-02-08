@@ -11,7 +11,9 @@ from pathlib import Path
 from ortools.sat.python import cp_model
 
 from meal_planner.config import apply_cli_overrides, load_config
+from meal_planner.ingredient_groups import build_ingredient_group_table
 from meal_planner.models import MealPlan, MealSlot, MealType, PrepStyle, Recipe
+from meal_planner.pins import PinSpec, ResolvedPin, resolve_pins
 from meal_planner.suggest import filter_recipes, load_all_recipes
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,8 @@ def build_meal_plan(
     config: dict,
     pantry_items: list[str] | None = None,
     exclude: list[str] | None = None,
+    pins: list[PinSpec] | None = None,
+    recipes: list[Recipe] | None = None,
 ) -> MealPlan | None:
     """Build an optimized weekly meal plan using CP-SAT."""
     num_days = config["schedule"]["plan_days"]
@@ -57,7 +61,7 @@ def build_meal_plan(
             cook_day_indices.add(idx)
 
     # Load all recipes
-    all_recipes = load_all_recipes(cooking_path)
+    all_recipes = recipes if recipes is not None else load_all_recipes(cooking_path)
 
     # Pre-filter candidates per meal type
     breakfast_candidates = filter_recipes(
@@ -92,13 +96,13 @@ def build_meal_plan(
 
     if not breakfast_candidates:
         logger.warning("No breakfast candidates found, using all recipes with calories")
-        breakfast_candidates = [r for r in all_recipes if r.calories is not None][:50]
+        breakfast_candidates = [r for r in all_recipes if r.calories is not None]
     if not dinner_candidates:
         logger.warning("No dinner candidates found, using all recipes with calories")
-        dinner_candidates = [r for r in all_recipes if r.calories is not None][:100]
+        dinner_candidates = [r for r in all_recipes if r.calories is not None]
     if not lunch_candidates:
         # Lunch can draw from dinner candidates too
-        lunch_candidates = dinner_candidates[:100]
+        lunch_candidates = list(dinner_candidates)
 
     # Snack candidates (broader pool: snack, appetizer, dessert, side)
     snacks_enabled = "snack" in config["schedule"]["meals_per_day"]
@@ -114,13 +118,23 @@ def build_meal_plan(
         snack_candidates = [r for r in snack_candidates if r.calories is not None]
         if not snack_candidates:
             logger.warning("No snack candidates found, using all recipes with calories")
-            snack_candidates = [r for r in all_recipes if r.calories is not None][:80]
-        snack_candidates = snack_candidates[:80]
+            snack_candidates = [r for r in all_recipes if r.calories is not None]
 
-    # Limit candidate pools for solver performance
-    breakfast_candidates = breakfast_candidates[:50]
-    lunch_candidates = lunch_candidates[:80]
-    dinner_candidates = dinner_candidates[:80]
+    # For batch breakfast: one recipe for all days
+    batch_breakfast = prep_styles["breakfast"] == "batch"
+
+    # Resolve pins (may inject recipes into candidate lists)
+    resolved_pins: list[ResolvedPin] = []
+    if pins:
+        candidates_by_meal = {
+            "breakfast": breakfast_candidates,
+            "lunch": lunch_candidates,
+            "dinner": dinner_candidates,
+            "snack": snack_candidates,
+        }
+        resolved_pins = resolve_pins(
+            pins, candidates_by_meal, all_recipes, num_days, batch_breakfast
+        )
 
     # Per-meal calorie/protein targets
     targets = {}
@@ -137,8 +151,6 @@ def build_meal_plan(
     model = cp_model.CpModel()
 
     # Decision variables
-    # For batch breakfast: one recipe for all days
-    batch_breakfast = prep_styles["breakfast"] == "batch"
 
     # Breakfast variables
     if batch_breakfast:
@@ -202,6 +214,34 @@ def build_meal_plan(
             snack_serving_vars[d] = model.new_int_var_from_domain(
                 cp_model.Domain.from_values(SERVING_OPTIONS), f"sn_servings_d{d}"
             )
+
+    # Apply pin constraints
+    pinned_days: dict[str, set[int]] = {}  # meal_type -> set of pinned day indices
+    for rpin in resolved_pins:
+        meal_key = rpin.meal_type.value
+        pinned_days.setdefault(meal_key, set()).update(rpin.days)
+
+        for d in rpin.days:
+            if rpin.meal_type == MealType.BREAKFAST:
+                if batch_breakfast:
+                    model.add(bf_recipe == rpin.candidate_index)
+                else:
+                    model.add(bf_recipe_vars[d] == rpin.candidate_index)
+            elif rpin.meal_type == MealType.DINNER:
+                if d in dinner_recipe_vars:
+                    model.add(dinner_recipe_vars[d] == rpin.candidate_index)
+                else:
+                    logger.warning("Day %d is a leftover day for dinner, pin skipped", d)
+            elif rpin.meal_type == MealType.LUNCH:
+                if d in lunch_recipe_vars:
+                    model.add(lunch_recipe_vars[d] == rpin.candidate_index)
+                else:
+                    logger.warning("Lunch on day %d is leftover mode, pin skipped", d)
+            elif rpin.meal_type == MealType.SNACK:
+                if d in snack_recipe_vars:
+                    model.add(snack_recipe_vars[d] == rpin.candidate_index)
+                else:
+                    logger.warning("Snacks not enabled, pin for day %d skipped", d)
 
     # Objective: minimize calorie and protein deviation
     # We use element constraints to look up recipe calories/protein
@@ -426,17 +466,50 @@ def build_meal_plan(
         model.add_abs_equality(pro_dev, day_total_pro - pro_target_scaled)
         pro_penalty_terms.append(pro_dev)
 
-    # Variety constraints: all dinner cook-day recipes must be different
-    if len(dinner_recipe_vars) > 1:
-        model.add_all_different(list(dinner_recipe_vars.values()))
+    # Variety constraints: all unpinned recipes must be different
+    pinned_dn = pinned_days.get("dinner", set())
+    unpinned_dn = [v for d, v in dinner_recipe_vars.items() if d not in pinned_dn]
+    if len(unpinned_dn) > 1:
+        model.add_all_different(unpinned_dn)
 
-    # If lunch has its own recipe vars, encourage variety there too
-    if len(lunch_recipe_vars) > 1:
-        model.add_all_different(list(lunch_recipe_vars.values()))
+    pinned_ln = pinned_days.get("lunch", set())
+    unpinned_ln = [v for d, v in lunch_recipe_vars.items() if d not in pinned_ln]
+    if len(unpinned_ln) > 1:
+        model.add_all_different(unpinned_ln)
 
-    # Snack variety
-    if len(snack_recipe_vars) > 1:
-        model.add_all_different(list(snack_recipe_vars.values()))
+    pinned_sn = pinned_days.get("snack", set())
+    unpinned_sn = [v for d, v in snack_recipe_vars.items() if d not in pinned_sn]
+    if len(unpinned_sn) > 1:
+        model.add_all_different(unpinned_sn)
+
+    # Ingredient-group diversity: unpinned dinners should have different protein sources
+    dn_group_ids, num_groups, group_key_to_id = build_ingredient_group_table(
+        dinner_candidates
+    )
+    unpinned_dn_days = [d for d in dinner_recipe_vars if d not in pinned_dn]
+    dn_group_vars: list = []
+    if len(unpinned_dn_days) > 1 and num_groups > 1:
+        for d in unpinned_dn_days:
+            gvar = model.new_int_var(0, num_groups - 1, f"dn_group_d{d}")
+            model.add_element(dinner_recipe_vars[d], dn_group_ids, gvar)
+            dn_group_vars.append(gvar)
+        model.add_all_different(dn_group_vars)
+
+    # Required ingredient groups: at least one dinner must use each required group
+    required_groups = config["preferences"].get("required_ingredient_groups") or []
+    if required_groups and dn_group_vars:
+        for group_name in required_groups:
+            group_key = f"group:{group_name}"
+            if group_key not in group_key_to_id:
+                continue  # no candidates with this group — skip silently
+            target_id = group_key_to_id[group_key]
+            bools = []
+            for i, gvar in enumerate(dn_group_vars):
+                b = model.new_bool_var(f"req_{group_name}_d{unpinned_dn_days[i]}")
+                model.add(gvar == target_id).only_enforce_if(b)
+                model.add(gvar != target_id).only_enforce_if(~b)
+                bools.append(b)
+            model.add_bool_or(bools)
 
     # Objective: minimize weighted deviations
     total_penalty = model.new_int_var(0, 100000000, "total_penalty")
@@ -447,7 +520,7 @@ def build_meal_plan(
 
     # Solve
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10.0
+    solver.parameters.max_time_in_seconds = 30.0
     status = solver.solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -494,6 +567,7 @@ def build_meal_plan(
                 servings=bf_svgs,
                 calories=(bf_r.calories or 0) * bf_svgs,
                 protein_g=(bf_r.protein_g or 0) * bf_svgs,
+                pinned=(d in pinned_days.get("breakfast", set())),
             )
         )
 
@@ -527,6 +601,7 @@ def build_meal_plan(
                 servings=dn_svgs,
                 calories=(dn_r.calories or 0) * dn_svgs,
                 protein_g=(dn_r.protein_g or 0) * dn_svgs,
+                pinned=(d in pinned_days.get("dinner", set())),
             )
         )
 
@@ -562,6 +637,7 @@ def build_meal_plan(
                 servings=ln_svgs,
                 calories=(ln_r.calories or 0) * ln_svgs,
                 protein_g=(ln_r.protein_g or 0) * ln_svgs,
+                pinned=(d in pinned_days.get("lunch", set())),
             )
         )
 
@@ -580,6 +656,7 @@ def build_meal_plan(
                     servings=sn_svgs,
                     calories=(sn_r.calories or 0) * sn_svgs,
                     protein_g=(sn_r.protein_g or 0) * sn_svgs,
+                    pinned=(d in pinned_days.get("snack", set())),
                 )
             )
 
@@ -620,6 +697,8 @@ def format_plan_markdown(plan: MealPlan) -> str:
             recipe_name = slot.recipe.name if slot.recipe else "TBD"
             svgs_note = f" ({slot.servings:.1f}x)" if slot.servings != 1.0 else ""
             prep_note = slot.prep_style.value
+            if slot.pinned:
+                prep_note += " (pinned)"
             lines.append(
                 f"| {slot.meal_type.value.title()} "
                 f"| [[{recipe_name}]]{svgs_note} "
@@ -679,6 +758,7 @@ def format_plan_json(plan: MealPlan) -> str:
                 "servings": s.servings,
                 "calories": round(s.calories, 1),
                 "protein_g": round(s.protein_g, 1),
+                "pinned": s.pinned,
             }
             for s in plan.slots
         ],
@@ -698,6 +778,11 @@ def run_plan(
     exclude: str | None = None,
     output_format: str = "markdown",
     snacks: bool = False,
+    pins: list[str] | None = None,
+    shopping_list: bool = False,
+    save_plan: str | None = None,
+    recipes: bool = False,
+    require_groups: list[str] | None = None,
 ) -> None:
     """CLI entry point for plan command."""
     config = load_config(vault_path)
@@ -708,6 +793,11 @@ def run_plan(
         cook_days=cook_days,
         days=days,
     )
+
+    if require_groups:
+        config["preferences"]["required_ingredient_groups"] = [
+            g.lower().strip() for g in require_groups
+        ]
 
     if snacks:
         if "snack" not in config["schedule"]["meals_per_day"]:
@@ -723,12 +813,60 @@ def run_plan(
     pantry_items = [p.strip() for p in pantry.split(",")] if pantry else None
     exclude_list = [e.strip() for e in exclude.split(",")] if exclude else None
 
-    plan = build_meal_plan(cooking_path, config, pantry_items, exclude_list)
+    from meal_planner.pins import parse_pin
+    parsed_pins = [parse_pin(p) for p in (pins or [])]
+
+    plan = build_meal_plan(cooking_path, config, pantry_items, exclude_list, parsed_pins)
 
     if plan is None:
         sys.exit(1)
 
+    plan_json_str = format_plan_json(plan)
+
+    # --save-plan: persist plan JSON to file
+    if save_plan is not None:
+        if save_plan == "auto":
+            save_path = f"meal-plan-{plan.start_date}.json"
+        else:
+            save_path = save_plan
+        with open(save_path, "w") as f:
+            f.write(plan_json_str)
+        print(f"Plan saved to {save_path}", file=sys.stderr)
+
+    # Print plan output
     if output_format == "json":
-        print(format_plan_json(plan))
+        print(plan_json_str)
     else:
         print(format_plan_markdown(plan))
+
+    # --recipes: append scaled recipes section
+    if recipes and output_format != "json":
+        from meal_planner.recipe_renderer import render_plan_recipes
+
+        recipes_md = render_plan_recipes(plan, cooking_path)
+        if recipes_md:
+            print(recipes_md)
+
+    # --shopping-list: append shopping list after separator
+    if shopping_list:
+        from meal_planner.shopping import (
+            build_shopping_sections,
+            format_shopping_markdown,
+        )
+
+        pantry_staples = config.get("pantry_staples", [])
+        if pantry:
+            pantry_staples = pantry_staples + [p.strip() for p in pantry.split(",")]
+
+        plan_data = json.loads(plan_json_str)
+        sections = build_shopping_sections(plan_data, cooking_path, pantry_staples)
+
+        if sections:
+            if output_format == "json":
+                from meal_planner.shopping import format_shopping_json
+
+                print(format_shopping_json(sections))
+            else:
+                print("---")
+                print()
+                print(format_shopping_markdown(sections))

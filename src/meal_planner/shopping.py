@@ -324,26 +324,21 @@ def format_shopping_json(sections: dict[str, list[dict]]) -> str:
     return json.dumps(sections, indent=2)
 
 
-def run_shopping_list(
+def build_shopping_sections(
+    plan_data: dict,
     cooking_path: Path,
-    vault_path: Path,
-    plan_file: str | None = None,
-    pantry: str | None = None,
-    output_format: str = "markdown",
-) -> None:
-    """CLI entry point for shopping-list command."""
-    config = load_config(vault_path)
-    pantry_staples = config.get("pantry_staples", [])
-    if pantry:
-        pantry_staples = pantry_staples + [p.strip() for p in pantry.split(",")]
+    pantry_staples: list[str] | None = None,
+) -> dict[str, list[dict]]:
+    """Build aggregated shopping list sections from a plan JSON dict.
 
-    # Load plan from file or stdin
-    if plan_file:
-        with open(plan_file) as f:
-            plan_data = json.load(f)
-    else:
-        plan_data = json.load(sys.stdin)
+    Args:
+        plan_data: plan JSON dict with a "slots" key
+        cooking_path: path to the cooking/recipe directory
+        pantry_staples: items to exclude from the list
 
+    Returns:
+        dict of section -> list of {item, qty, unit, notes}
+    """
     # Build ingredient lists with scale factors
     ingredient_lists: list[tuple[list[ParsedIngredient], float]] = []
 
@@ -380,7 +375,30 @@ def run_shopping_list(
 
         ingredient_lists.append((all_items, scale))
 
-    sections = aggregate_ingredients(ingredient_lists, pantry_staples)
+    return aggregate_ingredients(ingredient_lists, pantry_staples or [])
+
+
+def run_shopping_list(
+    cooking_path: Path,
+    vault_path: Path,
+    plan_file: str | None = None,
+    pantry: str | None = None,
+    output_format: str = "markdown",
+) -> None:
+    """CLI entry point for shopping-list command."""
+    config = load_config(vault_path)
+    pantry_staples = config.get("pantry_staples", [])
+    if pantry:
+        pantry_staples = pantry_staples + [p.strip() for p in pantry.split(",")]
+
+    # Load plan from file or stdin
+    if plan_file:
+        with open(plan_file) as f:
+            plan_data = json.load(f)
+    else:
+        plan_data = json.load(sys.stdin)
+
+    sections = build_shopping_sections(plan_data, cooking_path, pantry_staples)
 
     if not sections:
         logger.warning("No ingredients to list")
