@@ -23,6 +23,7 @@ def cmd_index(args: argparse.Namespace) -> None:
         limit=args.limit,
         force=getattr(args, "force", False),
         skip_api=getattr(args, "skip_api", False),
+        max_workers=getattr(args, "workers", 4),
     )
 
 
@@ -125,6 +126,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_index.add_argument(
         "--skip-api", action="store_true", help="Use regex parser instead of Haiku"
+    )
+    p_index.add_argument(
+        "--workers", type=int, default=4, help="Parallel Haiku workers (default: 4)"
     )
     p_index.set_defaults(func=cmd_index)
 

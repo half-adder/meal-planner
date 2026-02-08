@@ -246,6 +246,7 @@ def run_index(
     limit: int | None = None,
     force: bool = False,
     skip_api: bool = False,
+    max_workers: int = 4,
 ) -> None:
     """Run the index command."""
     files = discover_recipe_files(cooking_path, limit=limit)
@@ -302,7 +303,9 @@ def run_index(
     if not skip_api:
         from meal_planner.haiku_parser import parse_all_ingredients
 
-        parse_all_ingredients(recipes, cooking_path, force=force)
+        parse_all_ingredients(
+            recipes, cooking_path, force=force, max_workers=max_workers
+        )
     else:
         logger.info("Skipping API parsing (--skip-api)")
 

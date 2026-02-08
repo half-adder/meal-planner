@@ -199,13 +199,46 @@ def write_parsed_to_file(
         f.write("\n")
 
 
+def _fetch_batch(batch: list[Recipe]) -> dict[int, list[dict]]:
+    """Call Haiku for a batch of recipes and return parsed results.
+
+    Returns a dict mapping batch-local index -> parsed sections.
+    Missing keys indicate failures that need individual fallback.
+    """
+    parts = []
+    for i, recipe in enumerate(batch):
+        parts.append(f"===== RECIPE {i}: {recipe.name} =====")
+        parts.append(recipe.raw_ingredients)
+        parts.append("")
+
+    prompt = BATCH_PARSE_PROMPT + "\n".join(parts)
+    text = _call_haiku_raw(prompt, timeout=120)
+
+    results: dict[int, list[dict]] = {}
+    if text is not None:
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                for i in range(len(batch)):
+                    key = str(i)
+                    if key in parsed and isinstance(parsed[key], list):
+                        results[i] = parsed[key]
+        except json.JSONDecodeError as e:
+            logger.error("Batch JSON parse error: %s", e)
+
+    return results
+
+
 def parse_all_ingredients(
     recipes: list[Recipe],
     cooking_path: Path,
     force: bool = False,
     batch_size: int = 10,
+    max_workers: int = 4,
 ) -> None:
     """Parse ingredients for all recipes using Claude Haiku via CLI."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from rich.progress import (
         BarColumn,
         MofNCompleteColumn,
@@ -240,6 +273,11 @@ def parse_all_ingredients(
 
     logger.info("Parsing %d recipes with Haiku...", len(need_parsing))
 
+    # Split into batches
+    batches: list[list[Recipe]] = []
+    for start in range(0, len(need_parsing), batch_size):
+        batches.append(need_parsing[start : start + batch_size])
+
     parsed_count = 0
     error_count = 0
 
@@ -260,56 +298,41 @@ def parse_all_ingredients(
             fail=0,
         )
 
-        # Process in batches: call API then write results per batch
-        for batch_start in range(0, len(need_parsing), batch_size):
-            batch = need_parsing[batch_start : batch_start + batch_size]
+        # Submit all batches to thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_batch = {
+                executor.submit(_fetch_batch, batch): batch for batch in batches
+            }
 
-            # Build batched prompt
-            parts = []
-            for i, recipe in enumerate(batch):
-                parts.append(f"===== RECIPE {i}: {recipe.name} =====")
-                parts.append(recipe.raw_ingredients)
-                parts.append("")
+            for future in as_completed(future_to_batch):
+                batch = future_to_batch[future]
+                batch_results = future.result()
 
-            prompt = BATCH_PARSE_PROMPT + "\n".join(parts)
-            text = _call_haiku_raw(prompt, timeout=120)
+                # Process each recipe in this batch
+                for i, recipe in enumerate(batch):
+                    sections = batch_results.get(i)
 
-            # Try to parse batch response
-            batch_results: dict[int, list[dict]] = {}
-            if text is not None:
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, dict):
-                        for i in range(len(batch)):
-                            key = str(i)
-                            if key in parsed and isinstance(parsed[key], list):
-                                batch_results[i] = parsed[key]
-                except json.JSONDecodeError as e:
-                    logger.error("Batch JSON parse error: %s", e)
+                    # Fallback: parse individually if batch missed this recipe
+                    if sections is None:
+                        logger.debug(
+                            "Falling back to individual parse: %s", recipe.name
+                        )
+                        sections = call_haiku(recipe.raw_ingredients)
 
-            # Process each recipe in this batch
-            for i, recipe in enumerate(batch):
-                sections = batch_results.get(i)
+                    if sections is None:
+                        error_count += 1
+                        logger.debug("FAILED: %s", recipe.name)
+                        progress.update(task, advance=1, fail=error_count)
+                        continue
 
-                # Fallback: parse individually if batch missed this recipe
-                if sections is None:
-                    logger.debug("Falling back to individual parse: %s", recipe.name)
-                    sections = call_haiku(recipe.raw_ingredients)
+                    fm_data = parsed_to_frontmatter_format(sections)
+                    current_hash = recipe._pending_hash  # type: ignore[attr-defined]
+                    write_parsed_to_file(recipe.file_path, fm_data, current_hash)
 
-                if sections is None:
-                    error_count += 1
-                    logger.debug("FAILED: %s", recipe.name)
-                    progress.update(task, advance=1, fail=error_count)
-                    continue
-
-                fm_data = parsed_to_frontmatter_format(sections)
-                current_hash = recipe._pending_hash  # type: ignore[attr-defined]
-                write_parsed_to_file(recipe.file_path, fm_data, current_hash)
-
-                parsed_count += 1
-                total_items = sum(len(s.get("items", [])) for s in sections)
-                logger.debug("OK: %s (%d ingredients)", recipe.name, total_items)
-                progress.update(task, advance=1, ok=parsed_count)
+                    parsed_count += 1
+                    total_items = sum(len(s.get("items", [])) for s in sections)
+                    logger.debug("OK: %s (%d ingredients)", recipe.name, total_items)
+                    progress.update(task, advance=1, ok=parsed_count)
 
     logger.info(
         "Done: %d parsed, %d errors, %d skipped (already parsed)",
